@@ -6,9 +6,9 @@
 export const APP_NAME = "Walter's Home Check — Home Inspection Checklist";
 
 // Links shown in Settings → About
-export const YOUTUBE_URL = "https://youtube.com/@PLACEHOLDER";
-export const STORE_URL = "https://payhip.com/PLACEHOLDER";
-export const SUPPORT_EMAIL = "PLACEHOLDER@example.com";
+export const YOUTUBE_URL = "https://www.youtube.com/@WaltersHomeCheck";
+export const STORE_URL = "https://payhip.com/WaltersHomeCheck";
+export const SUPPORT_EMAIL = "waltershomecheck@outlook.com";
 
 // Access codes. Never put the real codes here — only their "hash".
 // Make a hash with tools/make-code-hash.html, then paste it as a new line below.
