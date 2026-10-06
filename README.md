@@ -22,7 +22,7 @@ You only do this once.
 5. Under **Branch**, choose **main** and the folder **/ (root)**. Click **Save**.
 6. Wait 1–2 minutes and refresh the page. A box at the top shows **"Your site is live at …"** with a link like
    `https://YOUR-USER-NAME.github.io/walter-checklist/`
-7. Open that link. You should see "Enter your access code". Type `WALTER-DEMO-2026` to try it.
+7. Open that link. You should see "Enter your access code". Type one of your access codes to try it.
 
 That link is what you give your buyers (for example in the Payhip product's download/thank-you text, together with their access code).
 
@@ -48,16 +48,12 @@ It can look like this:
 
 ```js
 export const ACCESS_CODE_HASHES = [
-  "986f3d05cd9d305f3f964f592a18bba811ac855b8880587f0fea627f293fd0c5", // WALTER-DEMO-2026 (for testing — remove before selling)
+  "5d6807a3…your existing hash…", // code #1
   "4b1c…your new hash…", // 2026-10-06
 ];
 ```
 
 You can use one code for everyone, or a few different ones.
-
-### Before you start selling
-
-Remove the demo line (`WALTER-DEMO-2026`) from `config.js`, so only your real codes work.
 
 **Good to know:** once someone unlocks the app on a device, it stays unlocked on that device — removing a code later doesn't lock people out.
 
@@ -139,7 +135,7 @@ If you ever want to force everyone to get a fresh copy, open **`sw.js`**, change
 
 ### Try the whole thing
 
-1. Open your app link and enter `WALTER-DEMO-2026`.
+1. Open your app link and enter one of your access codes.
 2. Start a check in each of the three modes, mark a few items, write a note, add a photo.
 3. Open **Summary**, then **PDF report**, and download/share the PDF.
 4. Go to **Settings** → make a backup → delete a check → restore from the backup file.
