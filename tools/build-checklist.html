@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Rebuild checklist data</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f7f2e8; --ink: #1b2a41; --card: #fffdf8; --line: #d8cdb8; --accent: #a4472b; --bad: #b3261e; --good: #2e7d32; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #14181f; --ink: #ece6da; --card: #1e242d; --line: #3a4350; --accent: #e08a6a; --bad: #ff8a80; --good: #81c784; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 18px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 8px; }
+  input[type=file] { font: inherit; margin: 12px 0; }
+  button { min-height: 48px; padding: 0 20px; font: inherit; font-weight: 700; border: 0; border-radius: 10px; background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  #result { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; white-space: pre-wrap; }
+  .bad { color: var(--bad); } .good { color: var(--good); }
+  code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Rebuild checklist data</h1>
+  <p>Use this after you change the wording in <code>CHECKLIST_CONTENT.md</code>. It turns that file into <code>data/checklist.js</code>, which the app reads.</p>
+  <ol>
+    <li>Download <code>CHECKLIST_CONTENT.md</code> from your GitHub repository (open it, then use the "Download raw file" button).</li>
+    <li>Choose it here:<br><input type="file" id="file" accept=".md,text/markdown,text/plain"></li>
+    <li>If everything looks right, click <strong>Download checklist.js</strong>.</li>
+    <li>In GitHub, open the <code>data</code> folder → <strong>Add file → Upload files</strong>, drop in <code>checklist.js</code> and click <strong>Commit changes</strong>.</li>
+  </ol>
+  <div id="result" role="status">No file chosen yet.</div>
+  <p><button id="dl" type="button" disabled>Download checklist.js</button></p>
+</main>
+<script src="checklist-parser.js"></script>
+<script>
+  let source = '';
+  const result = document.getElementById('result');
+  const dl = document.getElementById('dl');
+  document.getElementById('file').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const data = ChecklistParser.parseChecklist(await f.text());
+    const count = data.areas.reduce((n, a) => n + a.items.length, 0);
+    if (data.errors.length) {
+      result.innerHTML = '';
+      const p = document.createElement('p');
+      p.className = 'bad';
+      p.textContent = 'Please fix these lines in CHECKLIST_CONTENT.md first:\n\n' + data.errors.join('\n');
+      result.appendChild(p);
+      dl.disabled = true;
+      return;
+    }
+    if (!data.areas.length) {
+      result.innerHTML = '<p class="bad">No areas found. Is this the right file?</p>';
+      dl.disabled = true;
+      return;
+    }
+    source = ChecklistParser.toModuleSource(data);
+    result.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'good';
+    p.textContent = 'Looks good: ' + data.areas.length + ' areas, ' + count + ' items, ' + data.sellerQuestions.length + ' questions for the seller.';
+    result.appendChild(p);
+    dl.disabled = false;
+  });
+  dl.addEventListener('click', () => {
+    const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'checklist.js';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+</script>
+</body>
+</html>
