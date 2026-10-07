@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>My Home self-tests — Walter's Home Check</title>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; background: #f6f1e7; color: #1b2a41; }
+    h1 { font-family: Georgia, serif; }
+    .summary { font-size: 1.3rem; font-weight: 700; padding: 12px 16px; border-radius: 10px; }
+    .summary.ok { background: #e3f1e2; color: #2e6b30; }
+    .summary.bad { background: #fbe3e0; color: #a12620; }
+    section { margin-top: 18px; }
+    h2 { font-size: 1.1rem; margin: 0 0 6px; }
+    ul { margin: 0; padding-left: 1.2em; }
+    .pass { color: #2e6b30; }
+    .fail { color: #a12620; font-weight: 700; }
+    code { background: #fff; padding: 0 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>My Home — self-tests</h1>
+  <p>Opens a separate test database on this device and deletes it again when done. Your real checks and homes are not touched.</p>
+  <p class="summary" id="summary">Running…</p>
+  <div id="out"></div>
+
+  <script type="module">
+    import { RULES, SEASONS, CLIMATES, STATES, LIFESPANS } from '../data/maintenance.js';
+    import * as H from '../js/homeplan.js';
+    import * as ICS from '../js/ics.js';
+    import * as db from '../js/db.js';
+
+    const groups = [];
+    let current = null;
+    function group(name) { current = { name, results: [] }; groups.push(current); }
+    function check(name, cond, detail = '') { current.results.push({ name, ok: !!cond, detail }); }
+    function eq(name, actual, expected) {
+      const a = JSON.stringify(actual), e = JSON.stringify(expected);
+      check(name, a === e, a === e ? '' : `got ${a}, expected ${e}`);
+    }
+
+    const home = (extra = {}) => Object.assign(H.newHome('home-test'), extra);
+    const ids = (rules) => rules.map((r) => r.id);
+    const inYear = (h, id, year = 2026) => {
+      const months = [];
+      for (let m = 1; m <= 12; m++) if (ids(H.rulesForMonth(h, year, m)).includes(id)) months.push(m);
+      return months;
+    };
+
+    // ------------------------------------------------------------------
+    group('Rules data');
+    {
+      const idSet = new Set(RULES.map((r) => r.id));
+      check(`about 70 rules (${RULES.length})`, RULES.length >= 60 && RULES.length <= 90);
+      eq('rule ids are unique', idSet.size, RULES.length);
+      const bad = RULES.filter((r) => !r.id || !r.title || !r.why || !Array.isArray(r.months) || !r.months.length ||
+        typeof r.minutes !== 'number' || typeof r.diy !== 'boolean' || (r.diy === false && !r.pro) ||
+        (r.condition && typeof r.condition !== 'function') || !r.system);
+      eq('every rule has id, title, why, months, minutes, diy (and pro when diy is false)', ids(bad), []);
+      const badMonths = RULES.filter((r) => r.months.some((m) => typeof m === 'number' ? !(m >= 1 && m <= 12) : !SEASONS[m]));
+      eq('every month is 1–12 or a known season', ids(badMonths), []);
+      const seasonsOk = Object.values(SEASONS).every((s) => Object.keys(CLIMATES).every((c) => s[c] >= 1 && s[c] <= 12));
+      check('every season has a month for every climate group', seasonsOk);
+      eq('51 states + DC listed', STATES.length, 51);
+      check('every state maps to a climate group', STATES.every((s) => CLIMATES[s[2]]));
+      const required = ['gutters-spring', 'gutters-fall', 'roof-look', 'attic-look', 'hvac-filter', 'heating-tuneup', 'ac-tuneup',
+        'wh-flush', 'wh-relief-valve', 'sump-spring', 'sump-rainy', 'alarms-test', 'alarm-batteries', 'extinguisher', 'dryer-vent',
+        'range-hood', 'fridge-coils', 'gfci-test', 'faucets-off', 'caulk-weatherstrip', 'grading', 'deck-inspect', 'deck-seal', 'chimney',
+        'garage-door', 'locks-windows', 'foundation-walk', 'basement-moisture', 'radon', 'septic-pump', 'well-test', 'pipe-insulation',
+        'hurricane-prep', 'wildfire-space', 'ice-dams', 'main-shutoff', 'leak-check', 'tub-caulk', 'trim-trees', 'pests-spring'];
+      eq('all topics from the spec are covered', required.filter((id) => !idSet.has(id)), []);
+      const proJobs = ['heating-tuneup', 'ac-tuneup', 'chimney', 'trim-trees', 'dryer-vent'];
+      eq('gas / electrical / structural work beyond looking is "Call a pro"', proJobs.filter((id) => RULES.find((r) => r.id === id).diy), []);
+    }
+
+    // ------------------------------------------------------------------
+    group('Rule filtering by home and climate');
+    {
+      eq('Michigan → Cold winters', H.climateFromState('MI'), 'cold');
+      eq('Florida → Hot & humid', H.climateFromState('FL'), 'hothumid');
+      eq('Arizona → Hot & dry', H.climateFromState('AZ'), 'hotdry');
+      eq('Virginia → Mixed', H.climateFromState('VA'), 'mixed');
+      eq('no state → Mixed', H.climateFor(home()), 'mixed');
+      eq('override beats the state', H.climateFor(home({ state: 'MI', climate: 'hotdry' })), 'hotdry');
+
+      eq('sump pump test hidden when there is no sump pump', inYear(home({ sumpPump: false }), 'sump-spring'), []);
+      eq('sump pump test hidden when not sure', inYear(home({ sumpPump: null }), 'sump-spring'), []);
+      eq('sump pump test in early spring (cold → April)', inYear(home({ sumpPump: true, state: 'MI' }), 'sump-spring'), [4]);
+      eq('sump pump before rainy season (hot & humid → May)', inYear(home({ sumpPump: true, state: 'FL' }), 'sump-rainy'), [5]);
+      eq('gutters spring + fall (cold)', [...inYear(home({ state: 'MI' }), 'gutters-spring'), ...inYear(home({ state: 'MI' }), 'gutters-fall')], [5, 11]);
+      eq('gutters hidden when the home has none', inYear(home({ gutters: false }), 'gutters-spring'), []);
+      eq('gutters shown when not sure', inYear(home({ gutters: null, state: 'VA' }), 'gutters-spring'), [4]);
+      eq('furnace tune-up early fall (cold → September)', inYear(home({ state: 'MI', heatingType: 'gas-furnace' }), 'heating-tuneup'), [9]);
+      eq('no heating tune-up with no heating', inYear(home({ heatingType: 'none' }), 'heating-tuneup'), []);
+      eq('AC tune-up only with central AC or a heat pump', [inYear(home({ centralAC: false }), 'ac-tuneup').length, inYear(home({ heatingType: 'heat-pump' }), 'ac-tuneup').length], [0, 1]);
+      eq('no water heater flush for tankless', inYear(home({ waterHeaterType: 'tankless' }), 'wh-flush'), []);
+      eq('tankless gets descaling instead', inYear(home({ waterHeaterType: 'tankless', state: 'VA' }), 'tankless-descale'), [4]);
+      eq('outdoor faucets off — cold (October)', inYear(home({ state: 'MN' }), 'faucets-off'), [10]);
+      eq('outdoor faucets off — mixed (November)', inYear(home({ state: 'VA' }), 'faucets-off'), [11]);
+      eq('no faucet shut-off in hot & humid', inYear(home({ state: 'FL' }), 'faucets-off'), []);
+      eq('pipe insulation not in hot & dry', inYear(home({ state: 'AZ' }), 'pipe-insulation'), []);
+      eq('hurricane prep in June, hot & humid only', [inYear(home({ state: 'LA' }), 'hurricane-prep'), inYear(home({ state: 'MI' }), 'hurricane-prep')], [[6], []]);
+      eq('wildfire space in spring, hot & dry only', [inYear(home({ state: 'CA' }), 'wildfire-space'), inYear(home({ state: 'FL' }), 'wildfire-space')], [[3], []]);
+      eq('ice dams in winter, cold only', [inYear(home({ state: 'ME' }), 'ice-dams'), inYear(home({ state: 'TX' }), 'ice-dams')], [[1, 2, 12], []]);
+      eq('deck jobs only with a deck', [inYear(home({ deck: false }), 'deck-inspect').length, inYear(home({ deck: true }), 'deck-inspect').length], [0, 1]);
+      eq('chimney in late summer with a fireplace', inYear(home({ fireplace: true }), 'chimney'), [8]);
+      eq('crawlspace job only for a crawlspace', [inYear(home({ foundation: 'slab' }), 'crawlspace-look').length, inYear(home({ foundation: 'crawlspace' }), 'crawlspace-look').length], [0, 1]);
+      eq('no basement moisture check on a slab', inYear(home({ foundation: 'slab' }), 'basement-moisture'), []);
+      eq('smoke & CO test every month', inYear(home(), 'alarms-test'), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+      eq('alarm batteries in March & November', inYear(home(), 'alarm-batteries'), [3, 11]);
+      eq('HVAC filter every 2 months', inYear(home({ heatingType: 'gas-furnace' }), 'hvac-filter'), [1, 3, 5, 7, 9, 11]);
+      eq('no filter reminder for a boiler without AC', inYear(home({ heatingType: 'gas-boiler', centralAC: false }), 'hvac-filter'), []);
+      eq('well test only with a well', [inYear(home({ well: true }), 'well-test'), inYear(home({ well: false }), 'well-test')], [[5], []]);
+      eq('septic: pumped 1 year ago → not yet', inYear(home({ septic: true, septicPumpedYear: 2025 }), 'septic-pump'), []);
+      eq('septic: pumped 4 years ago → remind', inYear(home({ septic: true, septicPumpedYear: 2022, state: 'MI' }), 'septic-pump'), [5]);
+      eq('septic: unknown last pumping → remind', inYear(home({ septic: true, state: 'MI' }), 'septic-pump'), [5]);
+      eq('septic: no septic → never', inYear(home({ septic: false }), 'septic-pump'), []);
+      eq('radon: tested last year → not this year', inYear(home({ radonTestYear: 2025 }), 'radon'), []);
+      eq('radon: tested 2 years ago → January', inYear(home({ radonTestYear: 2024 }), 'radon'), [1]);
+      eq('radon: never tested → January', inYear(home(), 'radon'), [1]);
+      const rule = RULES.find((r) => r.id === 'alarms-test');
+      check('family wording used when kids/older adults live at home', H.whyFor(rule, home({ household: true })) === rule.whyFamily);
+      check('normal wording otherwise', H.whyFor(rule, home({ household: false })) === rule.why);
+    }
+
+    // ------------------------------------------------------------------
+    group('Month generation, done, snooze, hide');
+    {
+      eq('month key', H.monthKey(2026, 3), '2026-03');
+      eq('addMonths wraps the year', H.addMonths(2026, 11, 3), { year: 2027, month: 2 });
+      eq('addMonths backwards', H.addMonths(2026, 1, -1), { year: 2025, month: 12 });
+      eq('addDays crosses months', H.addDays('2026-10-25', 14), '2026-11-08');
+      eq('parseMonthKey rejects month 13', H.parseMonthKey('2026-13'), null);
+
+      const h = home({ state: 'MI' });
+      const p0 = H.monthPlan(h, 2026, 10, '2026-10-07');
+      check('October has tasks', p0.total > 0);
+      eq('nothing done yet', p0.doneCount, 0);
+      eq('tasks list = total', p0.tasks.length, p0.total);
+
+      H.setDone(h, '2026-10', 'alarms-test', true);
+      const p1 = H.monthPlan(h, 2026, 10, '2026-10-07');
+      eq('done count goes up', p1.doneCount, 1);
+      check('task is marked done', p1.tasks.find((t) => t.rule.id === 'alarms-test').done);
+      eq('done is per month: November not affected', H.monthPlan(h, 2026, 11, '2026-11-02').doneCount, 0);
+      eq('done is per year: October 2027 not affected', H.monthPlan(h, 2027, 10, '2027-10-02').doneCount, 0);
+      H.setDone(h, '2026-10', 'alarms-test', false);
+      eq('un-done', H.monthPlan(h, 2026, 10, '2026-10-07').doneCount, 0);
+      eq('empty month entries are cleaned up', h.done, {});
+
+      const until = H.snooze(h, '2026-10', 'gfci-test', '2026-10-07');
+      eq('snooze is 2 weeks', until, '2026-10-21');
+      const p2 = H.monthPlan(h, 2026, 10, '2026-10-10');
+      check('snoozed task leaves the list', !p2.tasks.some((t) => t.rule.id === 'gfci-test'));
+      eq('snoozed list shows it', p2.snoozed.map((s) => [s.rule.id, s.until]), [['gfci-test', '2026-10-21']]);
+      eq('snoozed task still counts in the month total', p2.total, p0.total);
+      const p3 = H.monthPlan(h, 2026, 10, '2026-10-21');
+      check('back on the list when the snooze ends', p3.tasks.some((t) => t.rule.id === 'gfci-test') && !p3.snoozed.length);
+
+      H.snooze(h, '2026-10', 'roof-look', '2026-10-25'); // until Nov 8
+      const n1 = H.monthPlan(h, 2026, 11, '2026-11-02');
+      eq('snoozed across the month end: still waiting on Nov 2', n1.snoozed.map((s) => s.rule.id), ['roof-look']);
+      const n2 = H.monthPlan(h, 2026, 11, '2026-11-08');
+      eq('carried into November once the snooze ends', n2.carried.map((c) => [c.rule.id, c.key]), [['roof-look', '2026-10']]);
+      H.setDone(h, '2026-10', 'roof-look', true);
+      eq('done clears the snooze', H.monthPlan(h, 2026, 11, '2026-11-08').carried, []);
+      check('done saved in its own month', H.isDone(h, '2026-10', 'roof-look'));
+
+      H.hideRule(h, 'leak-check');
+      const p4 = H.monthPlan(h, 2026, 10, '2026-10-07');
+      check('hidden rule leaves the list', !p4.tasks.some((t) => t.rule.id === 'leak-check'));
+      eq('hidden rule listed as hidden', ids(p4.hidden), ['leak-check']);
+      eq('hidden rule not counted', p4.total, p0.total - 1);
+      check('hidden in every month', ![1, 4, 7].some((m) => H.monthPlan(h, 2026, m, '2026-10-07').tasks.some((t) => t.rule.id === 'leak-check')));
+      H.unhideRule(h, 'leak-check');
+      eq('show again', H.monthPlan(h, 2026, 10, '2026-10-07').total, p0.total);
+
+      const old = home({ snoozed: { '2024-01:gfci-test': '2024-01-15', '2026-10:roof-look': '2026-10-21' } });
+      H.pruneSnoozes(old, '2026-10-07');
+      eq('old snoozes are tidied up', Object.keys(old.snoozed), ['2026-10:roof-look']);
+      eq('home name default', H.homeName(home()), 'My home');
+    }
+
+    // ------------------------------------------------------------------
+    group('Calendar file (.ics)');
+    {
+      const h = home({ id: 'home-abc', state: 'MI', nickname: 'Our house' });
+      h.id = 'home-abc';
+      H.hideRule(h, 'gutters-fall');
+      const text = ICS.buildICS(h, { from: new Date(2026, 9, 7), now: new Date(Date.UTC(2026, 9, 7, 12, 0, 0)) });
+      check('every line ends with CRLF', text.endsWith('\r\n') && !/[^\r]\n/.test(text) && !/\r(?!\n)/.test(text));
+      const rawLines = text.split('\r\n').slice(0, -1);
+      const enc = new TextEncoder();
+      eq('no line longer than 75 bytes', rawLines.filter((l) => enc.encode(l).length > 75).length, 0);
+      check('long lines are folded', rawLines.some((l) => l.startsWith(' ')));
+      const { events, lines } = ICS.parseICS(text);
+      eq('VCALENDAR wraps everything', [lines[0], lines[lines.length - 1]], ['BEGIN:VCALENDAR', 'END:VCALENDAR']);
+      check('VERSION 2.0 and PRODID', lines.includes('VERSION:2.0') && lines.some((l) => l.startsWith('PRODID:')));
+      eq('12 events', events.length, 12);
+      eq('starts next month on the 1st (all day)', [events[0].DTSTART.value, events[0].DTSTART.params], ['20261101', ['VALUE=DATE']]);
+      eq('one-day event (DTEND is the next day)', events[0].DTEND.value, '20261102');
+      eq('last event is October next year', events[11].DTSTART.value, '20271001');
+      eq('December then January of the next year', [events[1].DTSTART.value, events[2].DTSTART.value], ['20261201', '20270101']);
+      eq('title', ICS.unescapeText(events[0].SUMMARY), "Walter's Home Check: November house tasks");
+      check('every event has an alarm the morning of', events.every((e) => e.alarms === 1) && text.includes('TRIGGER;RELATED=START:PT9H'));
+      check('every event has a UID and DTSTAMP', events.every((e) => e.UID && /^\d{8}T\d{6}Z$/.test(e.DTSTAMP)));
+      eq('UIDs are unique', new Set(events.map((e) => e.UID)).size, 12);
+      eq('UID format', events[0].UID, 'whc-home-abc-2026-11@walters-home-check');
+      const again = ICS.parseICS(ICS.buildICS(h, { from: new Date(2026, 9, 20), now: new Date() })).events;
+      eq('UIDs stay the same when exported again', again.map((e) => e.UID), events.map((e) => e.UID));
+      const desc = ICS.unescapeText(events[0].DESCRIPTION);
+      check('description lists the month\'s tasks', desc.includes('- Test every smoke and CO alarm'));
+      check('hidden tasks are left out', !desc.includes('Clean the gutters after the leaves come down'));
+      check('description ends with "Open the app for details."', desc.endsWith('Open the app for details.'));
+
+      eq('escape commas', ICS.escapeText('a,b'), 'a\\,b');
+      eq('escape semicolons', ICS.escapeText('a;b'), 'a\\;b');
+      eq('escape backslash', ICS.escapeText('a\\b'), 'a\\\\b');
+      eq('escape new lines', ICS.escapeText('a\nb\r\nc'), 'a\\nb\\nc');
+      eq('unescape round trip', ICS.unescapeText(ICS.escapeText('Roof, gutters; and \\ more\nNext')), 'Roof, gutters; and \\ more\nNext');
+      check('commas in titles are escaped in the file', /SUMMARY:.*\\,|DESCRIPTION:.*\\,/.test(text.replace(/\r\n /g, '')) || !RULES.some((r) => r.title.includes(',')));
+
+      const folded = ICS.foldLine('DESCRIPTION:' + 'é'.repeat(80));
+      check('folding never splits a 2-byte character', folded.split('\r\n').every((l) => enc.encode(l).length <= 75) && folded.replace(/\r\n /g, '') === 'DESCRIPTION:' + 'é'.repeat(80));
+      eq('short lines are not folded', ICS.foldLine('SUMMARY:short'), 'SUMMARY:short');
+
+      const many = Array.from({ length: 200 }, (_, i) => `Task number ${i + 1} with some words`);
+      const d = ICS.monthDescription(many);
+      const body = d.replace(/\n\nOpen the app for details\.$/, '');
+      check(`description is at most 1,000 characters before the footer (${body.length})`, body.length <= 1000);
+      check('says how many more', /…and \d+ more\.$/.test(body));
+      check('footer added after a cut', d.endsWith('\n\nOpen the app for details.'));
+      eq('empty month text', ICS.monthDescription([]), 'Nothing scheduled this month.\n\nOpen the app for details.');
+    }
+
+    // ------------------------------------------------------------------
+    group('Age report thresholds');
+    {
+      const asphalt = LIFESPANS.roof.asphalt;
+      eq('asphalt roof 20–25: 14 yrs → plenty of life', H.ageStatus(2012, asphalt, 2026).status, 'ok');
+      eq('asphalt roof: 15 yrs → getting older', H.ageStatus(2011, asphalt, 2026).status, 'older');
+      eq('asphalt roof: 19 yrs → getting older', H.ageStatus(2007, asphalt, 2026).status, 'older');
+      eq('asphalt roof: 20 yrs → at or past typical age', H.ageStatus(2006, asphalt, 2026).status, 'past');
+      eq('asphalt roof: 30 yrs → past', H.ageStatus(1996, asphalt, 2026).status, 'past');
+      const tank = LIFESPANS.waterHeater['tank-gas'];
+      eq('tank water heater 8–12: 5 → ok, 6 → older, 8 → past', [5, 6, 8].map((a) => H.ageStatus(2026 - a, tank, 2026).status), ['ok', 'older', 'past']);
+      eq('tankless 15–20: 11 → ok, 12 → older, 15 → past', [11, 12, 15].map((a) => H.ageStatus(2026 - a, LIFESPANS.waterHeater.tankless, 2026).status), ['ok', 'older', 'past']);
+      eq('smoke alarms replace at 10: 7 → ok, 8 → older, 10 → past', [7, 8, 10].map((a) => H.ageStatus(2026 - a, LIFESPANS.smokeAlarm, 2026).status), ['ok', 'older', 'past']);
+      eq('CO alarms 5–7: 3 → ok, 4 → older, 5 → past', [3, 4, 5].map((a) => H.ageStatus(2026 - a, LIFESPANS.coAlarm, 2026).status), ['ok', 'older', 'past']);
+      eq('heat pump 10–15: 7 → ok, 8 → older, 10 → past', [7, 8, 10].map((a) => H.ageStatus(2026 - a, LIFESPANS.heating['heat-pump'], 2026).status), ['ok', 'older', 'past']);
+      eq('sump pump 7–10: 5 → ok, 6 → older, 7 → past', [5, 6, 7].map((a) => H.ageStatus(2026 - a, LIFESPANS.sumpPump, 2026).status), ['ok', 'older', 'past']);
+      eq('tile roof 50+: 40 → older, 50 → past', [40, 50].map((a) => H.ageStatus(2026 - a, LIFESPANS.roof.tile, 2026).status), ['older', 'past']);
+      eq('status words', [H.AGE_STATUS.ok, H.AGE_STATUS.older, H.AGE_STATUS.past],
+        ['Plenty of life left', 'Getting older — keep an eye on it', 'At or past typical age — start planning']);
+      eq('unknown year → no status', H.ageStatus(null, asphalt, 2026), null);
+      eq('future year → no status', H.ageStatus(2030, asphalt, 2026), null);
+      eq('age is counted in years', H.ageStatus(2006, asphalt, 2026).age, 20);
+      check('bar never past 100%', H.ageStatus(1950, asphalt, 2026).pct === 100);
+      eq('range labels', [H.rangeLabel([20, 25]), H.rangeLabel([50, null]), H.rangeLabel([10, 10])], ['20–25 years', '50+ years', 'replace at 10 years']);
+      const rows = H.systemsReport(home({ roofType: 'metal', roofYear: 2000, heatingType: 'gas-boiler', heatingYear: 2014, centralAC: true, acYear: 2020, sumpPump: false }), 2026);
+      eq('systems report rows', rows.map((r) => [r.key, r.result && r.result.status]), [['roof', 'ok'], ['heating', 'older'], ['ac', 'ok'], ['smoke', null], ['co', null]]);
+      check('no prices anywhere in the report data', !JSON.stringify(rows).includes('$'));
+      eq('cleanYear accepts 2012', H.cleanYear('2012', 2026), 2012);
+      eq('cleanYear rejects junk', [H.cleanYear('abc', 2026), H.cleanYear('12', 2026), H.cleanYear('2099', 2026), H.cleanYear('', 2026)], [null, null, null, null]);
+    }
+
+    // ------------------------------------------------------------------
+    group('Database upgrade from version 1');
+    const TEST_DB = 'whc-selftest-' + Date.now();
+    try {
+      // 1. Make a version-1 database exactly like the first release did.
+      await new Promise((resolve, reject) => {
+        const req = indexedDB.open(TEST_DB, 1);
+        req.onupgradeneeded = () => {
+          const d = req.result;
+          d.createObjectStore('meta');
+          d.createObjectStore('inspections', { keyPath: 'id' });
+          const photos = d.createObjectStore('photos', { keyPath: 'id' });
+          photos.createIndex('inspectionId', 'inspectionId');
+        };
+        req.onsuccess = () => {
+          const d = req.result;
+          const t = d.transaction(['meta', 'inspections', 'photos'], 'readwrite');
+          t.objectStore('meta').put({ at: '2026-01-01T00:00:00.000Z' }, 'unlocked');
+          t.objectStore('meta').put('2026-02-01T00:00:00.000Z', 'lastBackup');
+          t.objectStore('inspections').put({ id: 'check-1', name: '12 Oak Street', mode: 'B', createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', answers: { 'a1-01': { status: 'problem', note: 'Slopes toward house', photoIds: ['photo-1'] } } });
+          t.objectStore('inspections').put({ id: 'check-2', name: '', mode: 'W', createdAt: '2026-01-03T00:00:00.000Z', updatedAt: '2026-01-03T00:00:00.000Z', answers: {} });
+          t.objectStore('photos').put({ id: 'photo-1', inspectionId: 'check-1', itemId: 'a1-01', dataUrl: 'data:image/jpeg;base64,/9j/AA==', width: 1, height: 1 });
+          t.oncomplete = () => { d.close(); resolve(); };
+          t.onerror = () => reject(t.error);
+        };
+        req.onerror = () => reject(req.error);
+      });
+
+      // 2. Open it with the app's own code (this runs the upgrade).
+      db._useDatabase(TEST_DB);
+      const inspections = await db.listInspections();
+      eq('both v1 checks are still there', inspections.map((i) => i.id).sort(), ['check-1', 'check-2']);
+      const c1 = await db.getInspection('check-1');
+      eq('answers intact', c1.answers['a1-01'], { status: 'problem', note: 'Slopes toward house', photoIds: ['photo-1'] });
+      eq('photo intact', (await db.getPhotosForInspection('check-1')).map((p) => p.id), ['photo-1']);
+      check('still unlocked after the upgrade', !!(await db.getMeta('unlocked')));
+      eq('last backup date intact', await db.getMeta('lastBackup'), '2026-02-01T00:00:00.000Z');
+
+      const ver = await new Promise((resolve) => {
+        const r = indexedDB.open(TEST_DB);
+        r.onsuccess = () => { const v = { version: r.result.version, stores: [...r.result.objectStoreNames].sort() }; r.result.close(); resolve(v); };
+      });
+      eq('database is now version 2', ver.version, db.DB_VERSION);
+      eq('only new stores were added', ver.stores, ['homes', 'inspections', 'logPhotos', 'logs', 'meta', 'photos']);
+
+      // 3. New stores work, and backups include everything.
+      const h = Object.assign(H.newHome('home-1'), { nickname: 'Our house', state: 'OH' });
+      await db.putHome(h);
+      await db.saveLog({ id: 'log-1', homeId: 'home-1', date: '2026-09-01', what: 'New water heater', system: 'water-heater', who: 'company', company: 'Ace Plumbing', cost: 1450, notes: '', photoIds: ['lp-1'] },
+        [{ id: 'lp-1', homeId: 'home-1', logId: 'log-1', dataUrl: 'data:image/jpeg;base64,/9j/AA==', width: 1, height: 1 }]);
+      const backup = await db.exportAll();
+      eq('backup has everything', [backup.format, backup.inspections.length, backup.photos.length, backup.homes.length, backup.logs.length, backup.logPhotos.length], [2, 2, 1, 1, 1, 1]);
+
+      await db.deleteHome('home-1');
+      eq('deleting a home removes its logbook and photos', [(await db.listHomes()).length, (await db.getLogsForHome('home-1')).length, await db.getLogPhoto('lp-1')], [0, 0, undefined]);
+      eq('deleting a home leaves checks alone', (await db.listInspections()).length, 2);
+
+      await db.importAll(JSON.parse(JSON.stringify(backup)));
+      eq('restore brings the home, log and photo back', [(await db.listHomes()).length, (await db.getLogsForHome('home-1')).length, !!(await db.getLogPhoto('lp-1'))], [1, 1, true]);
+
+      // An old (format 1) backup file still restores.
+      const v1Backup = { app: 'walters-home-check', format: 1, exportedAt: '2026-01-01T00:00:00.000Z', inspections: [{ id: 'check-9', name: 'Old', mode: 'A', answers: {} }], photos: [] };
+      await db.importAll(v1Backup);
+      check('an old backup file (format 1) still restores', !!(await db.getInspection('check-9')));
+      let threw = false;
+      try { db.validateBackup({ app: 'walters-home-check', inspections: [], photos: [], logs: [{ id: 'x' }] }); } catch (e) { threw = true; }
+      check('a damaged logbook entry in a backup is refused', threw);
+    } catch (e) {
+      check('database test ran without errors', false, String(e && e.message || e));
+    } finally {
+      db._useDatabase('walters-home-check');
+      await new Promise((resolve) => {
+        const r = indexedDB.deleteDatabase(TEST_DB);
+        r.onsuccess = r.onerror = r.onblocked = () => resolve();
+      });
+    }
+
+    // ------------------------------------------------------------------
+    let passed = 0, failed = 0;
+    const failures = [];
+    const out = document.getElementById('out');
+    for (const g of groups) {
+      const sec = document.createElement('section');
+      const h2 = document.createElement('h2');
+      h2.textContent = g.name;
+      const ul = document.createElement('ul');
+      for (const r of g.results) {
+        const li = document.createElement('li');
+        li.className = r.ok ? 'pass' : 'fail';
+        li.textContent = `${r.ok ? '✓' : '✗'} ${r.name}${r.detail ? ' — ' + r.detail : ''}`;
+        ul.appendChild(li);
+        if (r.ok) passed++; else { failed++; failures.push(`${g.name}: ${r.name} ${r.detail}`); }
+      }
+      sec.append(h2, ul);
+      out.appendChild(sec);
+    }
+    const sum = document.getElementById('summary');
+    sum.textContent = failed ? `${failed} of ${passed + failed} tests failed` : `All ${passed} tests passed`;
+    sum.className = 'summary ' + (failed ? 'bad' : 'ok');
+    window.__testResults = { passed, failed, failures };
+  </script>
+</body>
+</html>

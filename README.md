@@ -2,6 +2,8 @@
 
 A phone-friendly checklist app that walks a homeowner or home buyer through a house, area by area. People mark each item (OK / Keep an eye on / Problem / N/A), add notes and photos, and make a PDF report.
 
+It also has **My Home**: a monthly maintenance calendar for the house people live in (see section 9).
+
 - Works on iPhone, Android and computers. Can be installed to the Home Screen like a regular app.
 - Works **without internet** after the first visit.
 - No accounts, no tracking, no server. Everything people enter stays on **their own** device.
@@ -70,6 +72,7 @@ Open **`config.js`** → pencil icon, and change the text between the quotes:
 | `STORE_URL` | Link to your Payhip store |
 | `SUPPORT_EMAIL` | Email address shown for help |
 | `WALK_ORDER` | Suggested order of the areas (by their number in `CHECKLIST_CONTENT.md`) |
+| `MANUAL_URL` | Link in the small "Home Check Manual" card on the My Home tab |
 
 Keep the quotes `" "` and the semicolons. Then **Commit changes**.
 
@@ -127,7 +130,9 @@ Modes: **B** = Buying a home, **A** = Yearly home check, **W** = Get ready for w
 
 After you commit a change, GitHub Pages publishes it within a few minutes. The app keeps a saved copy so it works offline; it quietly downloads the new version in the background, and people see it the **next time** they open the app (sometimes the time after).
 
-If you ever want to force everyone to get a fresh copy, open **`sw.js`**, change `const VERSION = '1';` to `'2'` (then `'3'` next time, and so on) and commit.
+If you ever want to force everyone to get a fresh copy, open **`sw.js`**, raise the number in `const VERSION = '4';` by one (`'5'`, then `'6'` next time, and so on) and commit.
+
+If you ever add a **new file** to the app, also add its name to the `FILES` list in `sw.js`, or it won't work offline.
 
 ---
 
@@ -139,6 +144,11 @@ If you ever want to force everyone to get a fresh copy, open **`sw.js`**, change
 2. Start a check in each of the three modes, mark a few items, write a note, add a photo.
 3. Open **Summary**, then **PDF report**, and download/share the PDF.
 4. Go to **Settings** → make a backup → delete a check → restore from the backup file.
+5. Open the **My Home** tab → set up a home → tick a job as done, snooze one, hide one → add a logbook entry with a photo → **Export logbook PDF** → **Add reminders to my phone calendar**.
+
+### Self-tests for My Home
+
+Open `https://YOUR-USER-NAME.github.io/walter-checklist/tests/maintenance.html`. It checks the maintenance rules, the monthly lists, the calendar file, the age report and the storage upgrade, and should say **"All … tests passed"** in green. It uses its own test storage and doesn't touch anyone's data. Run it after you change `data/maintenance.js`.
 
 To start over as a brand-new user (see the access-code screen again): in Chrome, open the app, click the icon left of the address → **Site settings** → **Delete data**. On iPhone: Settings → Safari → Advanced → Website Data → find `github.io` → Delete.
 
@@ -152,9 +162,45 @@ To start over as a brand-new user (see the access-code screen again): in Chrome,
 
 ## 8. Where people's data lives
 
-Checks, notes and photos are stored in the browser on each person's own device. Nothing is uploaded — not to you, not to GitHub. That's why the app has **Settings → Backup**: it saves one file with everything (including photos) that people can keep in Files, iCloud Drive, Google Drive or email to themselves, and restore later or on a new phone.
+Checks, notes, photos, homes and logbook entries are stored in the browser on each person's own device. Nothing is uploaded — not to you, not to GitHub. That's why the app has **Settings → Backup**: it saves one file with everything (including photos) that people can keep in Files, iCloud Drive, Google Drive or email to themselves, and restore later or on a new phone.
 
 On iPhone, Safari may clear website data if the site isn't used for a while. Installing the app to the Home Screen prevents that, and the app explains this to iPhone users.
+
+---
+
+## 9. My Home (maintenance calendar)
+
+The **My Home** tab (bottom of the screen: **Checks · My Home · Settings**) helps people look after the house they live in.
+
+- **Home details** — a short form, all optional: nickname, US state, year built, and the house's systems (roof, water heater, heating, AC, sump pump, well, septic, fireplace, deck, basement/crawlspace/slab, gutters, smoke & CO alarms) with install years if known. The state picks a climate group (Cold winters / Mixed / Hot & humid / Hot & dry); people can change it. People can add more than one home.
+- **This month** — e.g. "October — 7 things for your house". Each job shows Walter's one-line reason, about how long it takes, and **Do it myself** or **Call a pro**. People can tick **Done**, **Snooze 2 weeks**, or say **Not for my house** (hides that job for that home; it can be brought back at the bottom of the page). A ring shows progress, and "Coming up next month" lists what's next.
+- **Year** — all 12 months with how many jobs and how many are done. Tap a month to see its list.
+- **Systems** — how old the roof, water heater, furnace etc. are next to their *typical* lifespan, with plain words ("Plenty of life left" / "Getting older — keep an eye on it" / "At or past typical age — start planning"). No prices.
+- **Reminders on the phone** — makes a calendar file with one reminder on the 1st of each month for the next 12 months. Adding it again updates the reminders instead of making copies in most calendar apps. Works offline.
+- **Logbook** — what was done, when, by whom, the cost and a photo. People can filter by part of the house and export a **logbook PDF** (handy when selling the house).
+- A small card at the bottom points to the Home Check Manual (`MANUAL_URL` in `config.js`). It shows up once a month and can be dismissed.
+
+Everything is included in **Settings → Backup**. Older backup files still restore fine.
+
+### Change the maintenance jobs
+
+All jobs are in **`data/maintenance.js`** (about 80 of them). Each one looks like this:
+
+```js
+{
+  id: 'gutters-spring', system: 'roof', title: 'Clean the gutters and check the downspouts',
+  why: 'Clogged gutters spill water right next to the foundation — and that is how basements get wet.',
+  months: ['spring'], condition: (p) => notNo(p.gutters), minutes: 60, diy: true, safety: true,
+  pro: 'Gutter cleaning service (if you would rather stay off the ladder)',
+},
+```
+
+- You can safely change the words in `title`, `why`, `whyFamily` (used when kids or older adults live at home) and `pro`, and the number in `minutes`.
+- `months` can be month numbers (`[3, 11]` = March and November) or season names like `'spring'` or `'early-fall'`. The `SEASONS` table near the top of the file says which month each season means in each climate.
+- **Never change an `id`** — people's "Done" ticks and hidden jobs are saved by it. To retire a job, it's safest to leave it in and change its months instead. To add a job, copy one and give it a new, unique id.
+- After a change, open the self-tests page (section 7) to make sure everything still passes.
+
+The typical lifespans for the Systems page are at the bottom of the same file (`LIFESPANS`).
 
 ---
 
@@ -166,13 +212,16 @@ On iPhone, Safari may clear website data if the site isn't used for a while. Ins
 | `config.js` | **Your settings:** access codes, links, email, walking order |
 | `CHECKLIST_CONTENT.md` | **The checklist wording** (the master copy) |
 | `data/checklist.js` | The checklist in the form the app reads |
-| `js/` | The app's code |
+| `data/maintenance.js` | **The My Home maintenance jobs**, climate groups and typical lifespans |
+| `js/` | The app's code (`myhome.js`, `homeplan.js`, `ics.js` and `logbook-pdf.js` are the My Home part) |
+| `tests/maintenance.html` | Self-tests for My Home (open it in the browser) |
 | `assets/` | Avatar picture and app icons |
 | `tools/make-code-hash.html` | Turns a new access code into a hash for `config.js` |
 | `tools/build-checklist.html` | Rebuilds `data/checklist.js` from `CHECKLIST_CONTENT.md` |
 | `vendor/jspdf.umd.min.js` | PDF maker (jsPDF, MIT license — see `vendor/jspdf-LICENSE.txt`) |
 | `sw.js`, `manifest.webmanifest` | Make the app installable and work offline |
 | `BUILD_SPEC.md` | The original build specification |
+| `SPEC_V2_HOME_MANUAL.md` | The specification for My Home |
 
 ---
 
