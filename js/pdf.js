@@ -5,7 +5,7 @@ import { getPhoto } from './db.js';
 import { formatDate } from './util.js';
 
 let jsPDFLoading = null;
-function loadJsPDF() {
+export function loadJsPDF() {
   if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
   if (!jsPDFLoading) {
     jsPDFLoading = new Promise((resolve, reject) => {
@@ -25,7 +25,7 @@ function loadJsPDF() {
 // The built-in PDF font only knows Western European letters. Swap or drop anything else
 // (for example emoji typed into a note) so the report never shows garbled text.
 const EXTRA_OK = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ';
-function pdfSafe(s) {
+export function pdfSafe(s) {
   return Array.from(String(s == null ? '' : s).replace(/\r\n?/g, '\n'))
     .map((ch) => {
       const c = ch.codePointAt(0);
@@ -38,7 +38,7 @@ function pdfSafe(s) {
 }
 
 // Shrink a photo for the report so the PDF stays small enough to email.
-function smallJpeg(dataUrl, maxSide = 520) {
+export function smallJpeg(dataUrl, maxSide = 520) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -59,7 +59,7 @@ function smallJpeg(dataUrl, maxSide = 520) {
   });
 }
 
-function avatarJpeg() {
+export function avatarJpeg() {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -76,7 +76,7 @@ function avatarJpeg() {
   });
 }
 
-const C = {
+export const C = {
   navy: [27, 42, 65],
   cream: [246, 241, 231],
   rust: [158, 65, 39],

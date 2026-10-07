@@ -9,13 +9,14 @@ import { icon } from './icons.js';
 import { compressPhoto } from './photos.js';
 import { esc, uid, formatDate, debounce, isIOS, isAndroid, downloadBlob, shareFile, isoDay, slugify } from './util.js';
 import * as install from './install.js';
+import { renderMyHome } from './myhome.js';
 
-const APP_VERSION = '1.0';
+const APP_VERSION = '2.0';
 const BACKUP_REMINDER_DAYS = 14;
 
 const main = document.getElementById('app');
 const backBtn = document.getElementById('back-btn');
-const settingsBtn = document.getElementById('settings-btn');
+const tabbar = document.getElementById('tabbar');
 const toastEl = document.getElementById('toast');
 
 let unlocked = false;
@@ -32,11 +33,33 @@ function toast(msg, ms = 2600) {
   toast.t = setTimeout(() => toastEl.classList.remove('show'), ms);
 }
 
-function setChrome({ title, back = null, showSettings = true }) {
+function setChrome({ title, back = null }) {
   document.title = title ? `${title} — Walter's Home Check` : "Walter's Home Check";
   backBtn.hidden = !back;
   backBtn.onclick = back ? () => { location.hash = back; } : null;
-  settingsBtn.hidden = !showSettings;
+}
+
+// Bottom tabs: Checks · My Home · Settings
+const TABS = [
+  ['checks', '#/', 'Checks', 'list'],
+  ['home', '#/home', 'My Home', 'home'],
+  ['settings', '#/settings', 'Settings', 'gear'],
+];
+function setTab(active) {
+  if (!active) {
+    tabbar.hidden = true;
+    document.body.classList.remove('has-tabbar');
+    return;
+  }
+  if (!tabbar.firstElementChild) {
+    tabbar.innerHTML = TABS.map(([k, href, label, ic]) => `<a class="tabbar__tab" href="${href}" data-tab="${k}">${icon(ic)}<span>${label}</span></a>`).join('');
+  }
+  tabbar.querySelectorAll('[data-tab]').forEach((a) => {
+    if (a.dataset.tab === active) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  });
+  tabbar.hidden = false;
+  document.body.classList.add('has-tabbar');
 }
 
 function progressBar(pct, label = `${pct}%`) {
@@ -120,9 +143,14 @@ async function route() {
 
   const parts = (location.hash.replace(/^#\/?/, '') || '').split('/').filter(Boolean).map(decodeURIComponent);
 
-  if (!unlocked) return renderUnlock();
+  if (!unlocked) {
+    setTab(null);
+    return renderUnlock();
+  }
+  setTab(parts[0] === 'home' ? 'home' : parts[0] === 'settings' ? 'settings' : 'checks');
 
   try {
+    if (parts[0] === 'home') return await renderMyHome(parts.slice(1), myHomeContext);
     if (parts[0] === 'new') return await renderNew();
     if (parts[0] === 'settings') return await renderSettings();
     if (parts[0] === 'check' && parts[1]) {
@@ -145,6 +173,22 @@ async function route() {
   }
 }
 
+// What the My Home screens (js/myhome.js) need from here.
+const myHomeContext = {
+  main,
+  toast,
+  setChrome,
+  afterRender: (sel) => afterRender(sel),
+  refresh: () => refresh(),
+  onPhone: () => onPhone(),
+  openViewer,
+  addCleanup: (fn) => view.cleanup.push(fn),
+  addFlush: (fn) => {
+    pendingFlushes.add(fn);
+    view.cleanup.push(() => pendingFlushes.delete(fn));
+  },
+};
+
 function afterRender(focusSelector) {
   if (keepScroll) {
     keepScroll = false;
@@ -165,7 +209,7 @@ function afterRender(focusSelector) {
 // ====================================================================
 
 function renderUnlock() {
-  setChrome({ title: 'Enter your access code', showSettings: false });
+  setChrome({ title: 'Enter your access code' });
   main.innerHTML = `
   <section class="unlock">
     <img class="unlock__avatar" src="assets/walter-avatar.png" alt="Walter" width="112" height="112">
@@ -248,7 +292,7 @@ async function installBannerHtml() {
 }
 
 async function renderHome() {
-  setChrome({ title: '', showSettings: true });
+  setChrome({ title: '' });
   const [list, lastBackup] = await Promise.all([db.listInspections(), db.getMeta('lastBackup')]);
   list.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
 
@@ -805,9 +849,10 @@ function setTheme(t) {
 }
 
 async function renderSettings() {
-  setChrome({ title: 'Settings', back: '#/', showSettings: false });
-  const [list, lastBackup] = await Promise.all([db.listInspections(), db.getMeta('lastBackup')]);
+  setChrome({ title: 'Settings' });
+  const [list, lastBackup, homes] = await Promise.all([db.listInspections(), db.getMeta('lastBackup'), db.listHomes()]);
   list.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  const hasData = list.length || homes.length;
   const theme = getTheme();
   const plat = install.platform();
 
@@ -831,11 +876,11 @@ async function renderSettings() {
 
     <section class="section" aria-labelledby="backup-title">
       <h2 id="backup-title">Backup &amp; restore</h2>
-      <p>Your checks, notes and photos are saved only on this device. A backup file holds all of them, so you can keep a copy safe or move to a new phone.</p>
+      <p>Your checks, notes, photos, home details and logbook are saved only on this device. A backup file holds all of them, so you can keep a copy safe or move to a new phone.</p>
       <p><strong>Last backup:</strong> ${lastBackup ? esc(formatDate(lastBackup)) : 'never'}</p>
       <div class="stack">
-        <button type="button" class="btn btn--block" data-action="backup" ${list.length ? '' : 'disabled'}>${icon('download')} ${onPhone() ? 'Save a backup file' : 'Download a backup file'}</button>
-        ${onPhone() ? `<button type="button" class="btn btn--ghost btn--block" data-action="backup-download" ${list.length ? '' : 'disabled'}>Download it instead</button>` : ''}
+        <button type="button" class="btn btn--block" data-action="backup" ${hasData ? '' : 'disabled'}>${icon('download')} ${onPhone() ? 'Save a backup file' : 'Download a backup file'}</button>
+        ${onPhone() ? `<button type="button" class="btn btn--ghost btn--block" data-action="backup-download" ${hasData ? '' : 'disabled'}>Download it instead</button>` : ''}
         <label class="btn btn--secondary btn--block" for="restore-file">${icon('upload')} Restore from a backup file</label>
         <input type="file" id="restore-file" class="file-input" accept=".json,application/json">
       </div>
@@ -933,15 +978,23 @@ async function renderSettings() {
         }
         db.validateBackup(data);
         const n = data.inspections.length;
+        const nh = (data.homes || []).length;
+        const nl = (data.logs || []).length;
         const existing = new Set(list.map((i) => i.id));
         const replacing = data.inspections.filter((i) => existing.has(i.id)).length;
+        const homeIds = new Set(homes.map((h) => h.id));
+        const replacingHomes = (data.homes || []).filter((h) => homeIds.has(h.id)).length;
         const when = data.exportedAt ? ` made on ${formatDate(data.exportedAt)}` : '';
-        let msg = `Restore ${n} check${n === 1 ? '' : 's'} from the backup${when}?`;
-        if (replacing) msg += `\n\n${replacing} of them ${replacing === 1 ? 'is' : 'are'} already on this device and will be replaced by the copy in the backup.`;
-        msg += '\n\nOther checks on this device will not be changed.';
+        const what = [`${n} check${n === 1 ? '' : 's'}`];
+        if (nh) what.push(`${nh} home${nh === 1 ? '' : 's'}`);
+        if (nl) what.push(`${nl} logbook entr${nl === 1 ? 'y' : 'ies'}`);
+        let msg = `Restore ${what.join(', ')} from the backup${when}?`;
+        if (replacing) msg += `\n\n${replacing} of the checks ${replacing === 1 ? 'is' : 'are'} already on this device and will be replaced by the copy in the backup.`;
+        if (replacingHomes) msg += `\n\n${replacingHomes} of the homes ${replacingHomes === 1 ? 'is' : 'are'} already on this device and will be replaced by the copy in the backup.`;
+        msg += '\n\nOther things on this device will not be changed.';
         if (!confirm(msg)) return;
         await db.importAll(data);
-        toast(`Restored ${n} check${n === 1 ? '' : 's'}.`);
+        toast(`Restored ${what.join(', ')}.`);
         refresh();
       } catch (err) {
         console.error(err);
@@ -967,6 +1020,10 @@ async function start() {
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Offline support not available:', e));
   }
+  // An older copy of the app is still open somewhere and holds the storage. The update waits for it.
+  document.addEventListener('whc-db-blocked', () => {
+    main.innerHTML = `<div class="card"><h1>One moment…</h1><p>Walter's Home Check was just updated. Please close any other tabs or windows where the app is open — this page will continue on its own.</p></div>`;
+  });
   try {
     unlocked = !!(await db.getMeta('unlocked'));
   } catch (e) {

@@ -30,3 +30,6 @@ export const ACCESS_CODE_HASHES = [
 // Outside first, then inside from the top of the house down.
 // Any area not listed here is added at the end.
 export const WALK_ORDER = [1, 2, 3, 4, 15, 6, 13, 12, 11, 14, 7, 8, 10, 9, 5];
+
+// "My Home" tab: the small card that points people to the Home Check Manual (shown at most once a month).
+export const MANUAL_URL = "https://payhip.com/b/ABaxT";

@@ -1,7 +1,7 @@
 // Service worker: keeps a copy of the app on the device so it works offline.
 // When you change files, the app picks them up automatically on the next visit or two.
 // Changing VERSION forces every device to download a fresh copy of everything.
-const VERSION = '3';
+const VERSION = '4';
 const CACHE = 'walters-home-check-v' + VERSION;
 
 const FILES = [
@@ -11,11 +11,16 @@ const FILES = [
   './config.js',
   './manifest.webmanifest',
   './data/checklist.js',
+  './data/maintenance.js',
   './js/app.js',
   './js/db.js',
   './js/icons.js',
+  './js/homeplan.js',
+  './js/ics.js',
   './js/install.js',
+  './js/logbook-pdf.js',
   './js/model.js',
+  './js/myhome.js',
   './js/pdf.js',
   './js/photos.js',
   './js/sha256.js',
